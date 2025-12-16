@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smart-retail-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: smart-retail-api
+  template:
+    metadata:
+      labels:
+        app: smart-retail-api
+    spec:
+      containers:
+      - name: api
+        image: ghcr.io/yourorg/smart-retail-api:latest
+        ports:
+        - containerPort: 8000

@@ -1,0 +1,7 @@
+opencv-python-headless==4.7.0.72
+numpy
+asyncio
+redis>=4.5.0
+Pillow
+easyocr
+ultralytics

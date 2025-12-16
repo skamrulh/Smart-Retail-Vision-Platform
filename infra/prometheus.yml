@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'smart-retail-api'
+    static_configs:
+      - targets: ['api:8000']
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']

@@ -1,0 +1,41 @@
+[Camera Feeds]
+      |
+      v
+[Frame Extractor / Stream Reader]
+      |
+      v
+[Redis Streams]
+      |
+      v
+[ML Processing Workers]
+  ├── Person Detection & Tracking
+  ├── Dwell-Time Estimation
+  ├── Foot-Traffic Heatmaps
+  ├── Shelf Detection & OCR
+      |
+      v
+[Analytics Aggregator]
+      |
+      v
+[Transformer Insight Generator]
+      |
+      v
+[FastAPI Service]
+  ├── /infer
+  ├── /analytics
+  ├── /health
+      |
+      v
+[Frontend Demo / External Consumers]
+
+Deployment:
+- Dockerized Services
+- CI/CD via GitHub Actions
+- Redis-backed real-time ingestion
+- Monitoring & logging hooks
+
+Future Extensions:
+- Multi-store orchestration
+- Edge inference
+- Real-time alerting
+- BI dashboard integration
