@@ -1,0 +1,146 @@
+name: CI-CD-Document-Intelligence
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO: document-intel-api
+  SAGEMAKER_MODEL_NAME: document-intel-model
+  SAGEMAKER_ENDPOINT_NAME: document-intel-endpoint
+  PYTHON_VERSION: "3.10"
+
+jobs:
+
+  # ---------------------------
+  # 1. Test + Lint
+  # ---------------------------
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "${{ env.PYTHON_VERSION }}"
+
+      - name: Install Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install flake8 pytest
+
+      - name: Lint
+        run: flake8 .
+
+      - name: Run Tests
+        run: pytest -q
+
+
+  # -------------------------------------
+  # 2. Build & Push Docker Image to ECR
+  # -------------------------------------
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Docker Image
+        run: |
+          docker build -t $ECR_REPO:latest .
+
+      - name: Tag Image
+        run: |
+          IMAGE_URI="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPO }}:latest"
+          docker tag $ECR_REPO:latest $IMAGE_URI
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+
+      - name: Push Image
+        run: |
+          docker push $IMAGE_URI
+
+
+  # --------------------------------------
+  # 3. Deploy Model to SageMaker
+  # --------------------------------------
+  sagemaker:
+    runs-on: ubuntu-latest
+    needs: docker
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update SageMaker Model + Endpoint
+        run: |
+          IMAGE_URI="${{ env.IMAGE_URI }}"
+          echo "Deploying $IMAGE_URI to SageMaker"
+
+          # Create or update the model
+          aws sagemaker create-model \
+            --model-name ${{ env.SAGEMAKER_MODEL_NAME }} \
+            --primary-container Image=$IMAGE_URI \
+            --execution-role-arn ${{ secrets.SAGEMAKER_ROLE }} \
+          || aws sagemaker update-model \
+              --model-name ${{ env.SAGEMAKER_MODEL_NAME }} \
+              --primary-container Image=$IMAGE_URI
+
+          # Create endpoint config or update
+          aws sagemaker create-endpoint-config \
+            --endpoint-config-name "${{ env.SAGEMAKER_MODEL_NAME }}-config" \
+            --production-variants "[{\"VariantName\":\"AllTraffic\",\"ModelName\":\"${{ env.SAGEMAKER_MODEL_NAME }}\",\"InitialInstanceCount\":1,\"InstanceType\":\"ml.m5.large\"}]" \
+          || aws sagemaker update-endpoint \
+              --endpoint-name ${{ env.SAGEMAKER_ENDPOINT_NAME }} \
+              --endpoint-config-name "${{ env.SAGEMAKER_MODEL_NAME }}-config"
+
+          # Create endpoint if does not exist
+          aws sagemaker describe-endpoint --endpoint-name ${{ env.SAGEMAKER_ENDPOINT_NAME }} \
+          || aws sagemaker create-endpoint \
+              --endpoint-name ${{ env.SAGEMAKER_ENDPOINT_NAME }} \
+              --endpoint-config-name "${{ env.SAGEMAKER_MODEL_NAME }}-config"
+
+
+  # ----------------------------------------------
+  # 4. Optional: Deploy FastAPI container to ECS
+  # ----------------------------------------------
+  ecs:
+    runs-on: ubuntu-latest
+    needs: docker
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update ECS Service
+        env:
+          CLUSTER: doc-intel-cluster
+          SERVICE: doc-intel-service
+        run: |
+          aws ecs update-service \
+            --cluster $CLUSTER \
+            --service $SERVICE \
+            --force-new-deployment
