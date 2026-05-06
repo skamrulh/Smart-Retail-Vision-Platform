@@ -1,0 +1,79 @@
+version: "3.9"
+services:
+  redis:
+    image: redis:7
+    command: redis-server --save 60 1 --appendonly yes
+    ports: ["6379:6379"]
+    volumes:
+      - redis-data:/data
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: sr_user
+      POSTGRES_PASSWORD: sr_pass
+      POSTGRES_DB: sr_meta
+    ports: ["5432:5432"]
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio:latest
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data
+    ports: ["9000:9000"]
+    volumes:
+      - minio-data:/data
+
+  api:
+    build: ./services/api
+    depends_on:
+      - redis
+      - minio
+      - postgres
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - DATABASE_URL=postgresql://sr_user:sr_pass@postgres:5432/sr_meta
+
+  worker:
+    build: ./services/worker
+    depends_on:
+      - redis
+      - minio
+      - api
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - CAM_SOURCE=0
+
+  trainer:
+    build: ./services/trainer
+    environment:
+      - DATA_YAML=datasets/retail.yaml
+      - MODEL_OUT=/out
+    
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:9.5.0
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  redis-data:
+  pg-data:
+  minio-data:

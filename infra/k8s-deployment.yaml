@@ -1,0 +1,86 @@
+# ── Deployment ────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smart-retail-api
+  labels:
+    app: smart-retail-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: smart-retail-api
+  template:
+    metadata:
+      labels:
+        app: smart-retail-api
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/yourorg/smart-retail-api:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: REDIS_URL
+              value: "redis://redis-service:6379"
+          # ── Resource limits ──────────────────────────────────────────────
+          resources:
+            requests:
+              cpu:    "250m"
+              memory: "512Mi"
+            limits:
+              cpu:    "1000m"
+              memory: "2Gi"
+          # ── Liveness probe — restart if the process hangs ────────────────
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds:       20
+            failureThreshold:    3
+          # ── Readiness probe — remove from LB until models loaded ─────────
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds:       10
+            failureThreshold:    5
+
+---
+# ── Service ───────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: smart-retail-api-service
+spec:
+  selector:
+    app: smart-retail-api
+  type: LoadBalancer
+  ports:
+    - name:       http
+      protocol:   TCP
+      port:       80
+      targetPort: 8000
+
+---
+# ── HorizontalPodAutoscaler ───────────────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: smart-retail-api-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind:       Deployment
+    name:       smart-retail-api
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type:               Utilization
+          averageUtilization: 70

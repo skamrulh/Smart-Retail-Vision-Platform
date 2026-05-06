@@ -1,0 +1,89 @@
+name: CI/CD — Smart Retail Vision Platform
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  PYTHON_VERSION: "3.11"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/smart-retail-api
+
+jobs:
+  # ── Job 1: Lint & test ──────────────────────────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+
+      - name: Install lightweight test dependencies
+        run: |
+          pip install --upgrade pip
+          pip install \
+            fastapi httpx pytest pytest-asyncio \
+            pydantic pydantic-settings \
+            prometheus-client Pillow numpy \
+            redis
+
+      - name: Lint (non-blocking style warnings; hard-fail on syntax errors)
+        run: |
+          pip install flake8
+          # Fail on syntax / undefined name errors
+          flake8 services/ config/ tests/ \
+            --count --select=E9,F63,F7,F82 --show-source --statistics
+          # Report style issues without failing the build
+          flake8 services/ config/ tests/ \
+            --count --exit-zero --max-complexity=12 --max-line-length=120 --statistics
+
+      - name: Run tests (ML mocked via conftest.py — no GPU required)
+        run: pytest tests/ -v --tb=short
+
+  # ── Job 2: Build & push Docker image (main branch only) ────────────────────
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    # Only push on the original repo to avoid permissions errors on forks
+    if: github.event_name == 'push' && github.repository == github.event.repository.full_name
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha
+
+      - name: Build and push API service image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/api    # correct Dockerfile location
+          push: true
+          tags:   ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
